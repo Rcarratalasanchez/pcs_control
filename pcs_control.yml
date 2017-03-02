@@ -1,0 +1,72 @@
+---
+
+# Stopping
+- name: '[COMPUTE] Stopping compute services...'
+  hosts: compute
+  remote_user: root
+  vars_files:
+    - vars/main.yml
+  tasks:
+    - include: tasks/stop_compute.yml
+
+- name: '[CONTROLLER] Stopping controller services...'
+  hosts: controller
+  vars_files:
+    - vars/main.yml
+  remote_user: root
+  tasks:
+    - include: tasks/stop_controller.yml
+
+- name: '[CINDER_CONTROLLER] Stopping controller services...'
+  hosts: cinder_controller
+  vars_files:
+    - vars/main.yml
+  remote_user: root
+  tasks:
+    - include: tasks/stop_cinder_controller.yml
+
+- name: '[CONTROLLER] Stopping haproxy services...'
+  hosts: haproxy
+  remote_user: root
+  vars_files:
+    - vars/main.yml
+  tasks:
+    - include: tasks/stop_haproxy.yml
+
+## Implement the changes that you need with the cluster stopped
+
+## foo
+
+### Starting...
+
+- name: '[CONTROLLER] Starting controller services...'
+  hosts: controller
+  vars_files:
+    - vars/main.yml
+  remote_user: root
+  tasks:
+    - include: tasks/start_controller.yml
+
+- name: '[CINDER_CONTROLLER] Starting controller services...'
+  hosts: cinder_controller
+  vars_files:
+    - vars/main.yml
+  remote_user: root
+  tasks:
+    - include: tasks/start_cinder_controller.yml
+
+- name: '[HAPROXY] Starting haproxy services...'
+  hosts: haproxy
+  vars_files:
+    - vars/main.yml
+  remote_user: root
+  tasks:
+    - include: tasks/start_haproxy.yml
+
+- name: '[COMPUTE] Starting compute services...'
+  hosts: compute
+  remote_user: root
+  vars_files:
+    - vars/main.yml
+  tasks:
+    - include: tasks/start_compute.yml

@@ -1,0 +1,27 @@
+---
+
+- set_fact:
+    az: "{{ ansible_fqdn | get_az_controller }}"
+
+## Stop Fencing
+- name: '[HAPROXY] Stop Fencing'
+  command: "pcs resource disable fence-{{ ansible_hostname }}-clu"
+
+- name: '[HAPROXY] Check Fencing'
+  shell: "crm_mon -1 -R --inactive | grep {{ item.p_name }}"
+  with_items:
+    - { p_name: "fence-{{ ansible_hostname }}-clu", status: 'Stopped' }
+  register: result
+  until: '"{{ item.status }}" in result.stdout'
+  retries: 12
+  delay: 10
+
+- name: '[HAPROXY][STOP LB HAPROXY] Stop lb haproxy clone'
+  command: "pcs resource disable {{ item }}"
+  with_items:
+    - lb-haproxy-clone
+  when:
+    - "'{{ ansible_fqdn | get_az_controller_master }}' == 'master'"
+
+- name: 'Waiting services to stop'
+  pause: seconds=20

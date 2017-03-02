@@ -1,0 +1,320 @@
+---
+
+- name: 'Checkpoint after execute the no ssl'
+  pause: seconds=20
+
+- set_fact:
+    az: "{{ ansible_fqdn | get_az_controller }}"
+
+##### Detect if keystone are over httpd or keystone itself
+- name: '[CONTROLLER][CHECK] Identify Keystone Resource'
+  shell: crm_mon -1 -R --inactive | grep keystone-clone
+  register: keystone_status
+  failed_when: '"no se encontró la orden" in keystone_status.stdout'
+
+- name: '[CONTROLLER][CHECK] Identify HTTPD Resource'
+  shell: crm_mon -1 -R --inactive | grep httpd-clone
+  register: httpd_status
+  failed_when: '"no se encontró la orden" in httpd_status.stdout'
+
+- name: '[CONTROLLER][CHECK] Set Keystone Resource'
+  set_fact:
+    keystone_resource: 'keystone'
+  when: '"keystone-clone" in keystone_status.stdout'
+
+- name: '[CONTROLLER][CHECK] Set Keystone as HTTPD Resource'
+  set_fact:
+    keystone_resource: 'httpd'
+  when: '"httpd-clone" in httpd_status.stdout'
+#####
+
+### Enable All Resources 
+- name: '[CONTROLLER][START MEMCACHED] Start Memcached Resource'
+  command: "pcs resource enable {{ item }}"
+  with_items:
+    - memcached-clone
+  when:
+    - "'{{ ansible_fqdn | get_az_controller_master }}' == 'master'"
+
+- name: '[CONTROLLER][START HTTPD] Start Keystone Resource'
+  command: "pcs resource enable {{ keystone_resource }}-clone"
+  when:
+    - "'{{ ansible_fqdn | get_az_controller_master }}' == 'master'"
+
+- name: '[CONTROLLER][START GLANCE] Start Glance Resource'
+  command: "pcs resource enable {{ item }}"
+  with_items:
+    - glance-registry-clone
+    - glance-api-clone
+  when: "'{{ ansible_fqdn | get_az_controller_master }}' == 'master'"
+
+- name: '[CONTROLLER][START CINDER] Start AZ1 specific Cinder resource'
+  command: "pcs resource enable cinder-api-clone"
+  when:
+    - "'{{ ansible_fqdn | get_az_controller_master }}' == 'master'"
+    - "{{ az }} == 1"
+
+- name: '[CONTROLLER][START CINDER] Start All masters Cinder resources'
+  command: "pcs resource enable {{ item }}"
+  with_items:
+    - "cinder-scheduler-clone"
+    - "cinder-backup-{{ region | upper }}-{{ az }}"
+    - "cinder-volume-{{ region | upper }}-{{ az }}"
+  when:
+    - "'{{ ansible_fqdn | get_az_controller_master }}' == 'master'"
+
+- name: '[CONTROLLER][START HEAT] Start Heat Resource'
+  command: "pcs resource enable {{ item }}"
+  with_items:
+    - heat-api-clone
+    - heat-api-cfn-clone
+    - heat-api-cloudwatch-clone
+    - heat-engine-clone
+  when: "'{{ ansible_fqdn | get_az_controller_master }}' == 'master'"
+
+- name: '[CONTROLLER][START NEUTRON] Start Neutron Resource'
+  command: "pcs resource enable {{ item }}"
+  with_items:
+    - neutron-server-clone
+  when:
+    - "'{{ ansible_fqdn | get_az_controller_master }}' == 'master'"
+
+- name: '[CONTROLLER][START CEILOMETER] Start Ceilometer Resource'
+  command: "pcs resource enable {{ item }}"
+  with_items:
+    - ceilometer-central
+    - ceilometer-collector-clone
+    - ceilometer-api-clone
+    - ceilometer-delay-clone
+    - ceilometer-alarm-evaluator-clone
+    - ceilometer-alarm-notifier-clone
+    - ceilometer-notification-clone
+  when: "'{{ ansible_fqdn | get_az_controller_master }}' == 'master'"
+
+- name: '[CONTROLLER][START NOVA CONTROLLER] Start Nova Resource'
+  command: "pcs resource enable {{ item }}"
+  with_items:
+    - nova-consoleauth-clone
+    - nova-novncproxy-clone
+    - nova-api-clone
+    - nova-scheduler-clone
+    - nova-conductor-clone
+  when: "'{{ ansible_fqdn | get_az_controller_master }}' == 'master'"
+
+- name: 'Waiting for pcs...'
+  pause: seconds=20
+
+### Checks
+- name: '[CONTROLLER] Check Glance Clustered Processes'
+  shell: "crm_mon -1 -R | grep $(hostname -s) | grep {{ item.p_name }}"
+  with_items:
+    - { p_name: 'memcached', status: 'Started' }
+    - { p_name: 'openstack-glance-registry', status: 'Started' }
+    - { p_name: 'openstack-glance-api', status: 'Started' }
+  register: glance
+  until: '"{{ item.status }}" in glance.stdout'
+  retries: 12
+  delay: 10
+  ignore_errors: true
+
+- name: '[CONTROLLER] Check Cinder Clustered Processes'
+  shell: "crm_mon -1 -R | grep $(hostname -s) | grep {{ item.p_name }}"
+  with_items:
+    - { p_name: 'openstack-cinder-api', status: 'Started' }
+    - { p_name: 'openstack-cinder-scheduler', status: 'Started' }
+  register: cinder
+  until: '"{{ item.status }}" in cinder.stdout'
+  retries: 12
+  delay: 10
+  ignore_errors: true
+
+- name: '[CONTROLLER] Check Nova Clustered Processes'
+  shell: "crm_mon -1 -R | grep $(hostname -s) | grep {{ item.p_name }}"
+  with_items:
+    - { p_name: 'openstack-nova-consoleauth', status: 'Started' }
+    - { p_name: 'openstack-nova-novncproxy', status: 'Started' }
+    - { p_name: 'openstack-nova-api', status: 'Started' }
+    - { p_name: 'openstack-nova-scheduler', status: 'Started' }
+    - { p_name: 'openstack-nova-conductor', status: 'Started' }
+  register: nova
+  until: '"{{ item.status }}" in nova.stdout'
+  retries: 12
+  delay: 10
+  ignore_errors: true
+
+
+- name: '[CONTROLLER] Check Ceilometer Clustered Processes'
+  shell: "crm_mon -1 -R | grep $(hostname -s) | grep {{ item.p_name }}"
+  with_items:
+    - { p_name: 'openstack-ceilometer-collector', status: 'Started' }
+    - { p_name: 'openstack-ceilometer-api', status: 'Started' }
+    - { p_name: 'ceilometer-delay', status: 'Started' }
+    - { p_name: 'openstack-ceilometer-alarm-evaluator', status: 'Started' }
+    - { p_name: 'openstack-ceilometer-alarm-notifier', status: 'Started' }
+    - { p_name: 'openstack-ceilometer-notification', status: 'Started' }
+  register: ceilometer
+  until: '"{{ item.status }}" in ceilometer.stdout'
+  retries: 12
+  delay: 10
+  ignore_errors: true
+
+
+- name: '[CONTROLLER] Check Heat Clustered Processes'
+  shell: "crm_mon -1 -R | grep $(hostname -s) | grep {{ item.p_name }}"
+  with_items:
+    - { p_name: 'openstack-heat-api', status: 'Started' }
+    - { p_name: 'openstack-heat-api-cfn', status: 'Started' }
+    - { p_name: 'openstack-heat-api-cloudwatch', status: 'Started' }
+    - { p_name: 'openstack-heat-engine', status: 'Started' }
+  register: heat
+  until: '"{{ item.status }}" in heat.stdout'
+  retries: 12
+  delay: 10
+  ignore_errors: true
+
+- name: '[CONTROLLER] Check Non-Clustered Processes'
+  shell: "crm_mon -1 -R | grep {{ item.p_name }}"
+  with_items:
+    - { p_name: 'ceilometer-central', status: 'Started' }
+    - { p_name: 'cinder-volume', status: 'Started' }
+    - { p_name: 'cinder-backup', status: 'Started' }
+  register: no_clust
+  until: '"{{ item.status }}" in no_clust.stdout'
+  retries: 12
+  delay: 10
+  ignore_errors: true
+###
+
+### Counters
+- name: '[CONTROLLER][COUNTER] Cleanup Glance Resources'
+  command: "pcs resource cleanup {{ item }}"
+  with_items:
+    - glance-registry-clone
+    - glance-api-clone
+  when:
+    - "'{{ ansible_fqdn | get_az_controller_master }}' == 'master'"
+    - glance | failed
+
+- name: '[CONTROLLER][COUNTER] Cleanup Cinder Resources'
+  command: "pcs resource cleanup {{ item }}"
+  with_items:
+    - cinder-scheduler-clone
+    - "cinder-backup-{{ region | upper }}-{{ az }}"
+    - "cinder-volume-{{ region | upper }}-{{ az }}"
+  when:
+    - "'{{ ansible_fqdn | get_az_controller_master }}' == 'master'"
+    - cinder | failed
+
+- name: '[CONTROLLER][COUNTER] Cleanup Ceilometer Resources'
+  command: "pcs resource cleanup {{ item }}"
+  with_items:
+    - ceilometer-central
+    - ceilometer-collector-clone
+    - ceilometer-api-clone
+    - ceilometer-delay-clone
+    - ceilometer-alarm-evaluator-clone
+    - ceilometer-alarm-notifier-clone
+    - ceilometer-notification-clone
+  when:
+    - "'{{ ansible_fqdn | get_az_controller_master }}' == 'master'"
+    - ceilometer | failed
+
+- name: '[CONTROLLER][COUNTER] Cleanup Nova Resources'
+  command: "pcs resource cleanup {{ item }}"
+  with_items:
+    - nova-novncproxy-clone
+    - nova-consoleauth-clone
+    - nova-api-clone
+    - nova-scheduler-clone
+    - nova-conductor-clone
+  when:
+    - "'{{ ansible_fqdn | get_az_controller_master }}' == 'master'"
+    - nova | failed
+
+- name: '[CONTROLLER][COUNTER] Cleanup Heat Resources'
+  command: "pcs resource cleanup {{ item }}"
+  with_items:
+    - heat-engine-clone
+  when:
+    - "'{{ ansible_fqdn | get_az_controller_master }}' == 'master'"
+    - heat | failed
+  notify:
+    - check heat-engine
+
+- meta: flush_handlers
+
+- name: '[CONTROLLER][COUNTER] Cleanup Non-Clustered Processes'
+  shell: "pcs resource cleanup {{ item.p_name }}"
+  with_items:
+    - { p_name: 'ceilometer-central', status: 'Started' }
+    - { p_name: 'cinder-volume', status: 'Started' }
+    - { p_name: 'cinder-backup', status: 'Started' }
+  until: '"{{ item.status }}" in no_clust.stdout'
+  retries: 12
+  delay: 10
+  when:
+  - "'{{ ansible_fqdn | get_az_controller_master }}' == 'master'"
+  - no_clust | failed
+
+
+### Finishing
+- name: '[CONTROLLER] Start Fencing'
+  command: "pcs resource enable fence-{{ ansible_hostname }}-clu"
+
+- name: '[CONTROLLER] Check Fencing'
+  shell: "crm_mon -1 -R | grep {{ item.p_name }}"
+  with_items:
+    - { p_name: "fence-{{ ansible_hostname }}-clu", status: 'Started' }
+  register: fence
+  until: '"{{ item.status }}" in fence.stdout'
+  retries: 12
+  delay: 10
+  ignore_errors: true
+
+- name: '[CONTROLLER][COUNTER] Cleanup Fencing Resources'
+  command: "pcs resource cleanup {{ item.p_name }}"
+  with_items:
+    - { p_name: "fence-{{ ansible_hostname }}-clu", status: 'Started' }
+  when:
+    - fence | failed
+
+- name: '[CONTROLLER][LAST] Check Clustered Processes'
+  shell: "crm_mon -1 -R | grep $(hostname -s) | grep {{ item.p_name }}"
+  with_items:
+    - { p_name: 'memcached', status: 'Started' }
+    - { p_name: 'openstack-glance-registry', status: 'Started' }
+    - { p_name: 'openstack-glance-api', status: 'Started' }
+    - { p_name: 'openstack-cinder-api', status: 'Started' }
+    - { p_name: 'openstack-cinder-scheduler', status: 'Started' }
+    - { p_name: 'openstack-nova-consoleauth', status: 'Started' }
+    - { p_name: 'openstack-nova-novncproxy', status: 'Started' }
+    - { p_name: 'openstack-nova-api', status: 'Started' }
+    - { p_name: 'openstack-nova-scheduler', status: 'Started' }
+    - { p_name: 'openstack-nova-conductor', status: 'Started' }
+    - { p_name: 'openstack-ceilometer-collector', status: 'Started' }
+    - { p_name: 'openstack-ceilometer-api', status: 'Started' }
+    - { p_name: 'ceilometer-delay', status: 'Started' }
+    - { p_name: 'openstack-ceilometer-alarm-evaluator', status: 'Started' }
+    - { p_name: 'openstack-ceilometer-alarm-notifier', status: 'Started' }
+    - { p_name: 'openstack-ceilometer-notification', status: 'Started' }
+    - { p_name: 'openstack-heat-api', status: 'Started' }
+    - { p_name: 'openstack-heat-api-cfn', status: 'Started' }
+    - { p_name: 'openstack-heat-api-cloudwatch', status: 'Started' }
+    - { p_name: 'openstack-heat-engine', status: 'Started' }
+  register: all
+  until: '"{{ item.status }}" in all.stdout'
+  retries: 12
+  delay: 10
+  ignore_errors: true
+
+- name: '[CONTROLLER][LAST] Check Non-Clustered Processes'
+  shell: "crm_mon -1 -R | grep {{ item.p_name }}"
+  with_items:
+    - { p_name: 'ceilometer-central', status: 'Started' }
+    - { p_name: 'cinder-volume', status: 'Started' }
+    - { p_name: 'cinder-backup', status: 'Started' }
+    - { p_name: "fence-{{ ansible_hostname }}-clu", status: 'Started' }
+  register: no_clust
+  until: '"{{ item.status }}" in no_clust.stdout'
+  retries: 12
+  delay: 10

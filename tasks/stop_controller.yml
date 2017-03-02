@@ -1,0 +1,150 @@
+---
+- set_fact:
+    az: "{{ ansible_fqdn | get_az_controller }}"
+
+## Stop Fencing
+- name: '[CONTROLLER] Stop Fencing'
+  command: "pcs resource disable fence-{{ ansible_hostname }}-clu"
+
+- name: '[CONTROLLER] Check Fencing'
+  shell: "crm_mon -1 -R --inactive | grep {{ item.p_name }}"
+  with_items:
+    - { p_name: "fence-{{ ansible_hostname }}-clu", status: 'Stopped' }
+  register: result
+  until: '"{{ item.status }}" in result.stdout'
+  retries: 12
+  delay: 10
+
+### Disable all resources
+##### Detect if keystone are over httpd or keystone itself
+- name: '[CONTROLLER][CHECK] Identify Keystone Resource'
+  shell: crm_mon -1 -R --inactive | grep keystone-clone
+  register: keystone_status
+  failed_when: '"no se encontró la orden" in keystone_status.stdout'
+
+- name: '[CONTROLLER][CHECK] Identify HTTPD Resource'
+  shell: crm_mon -1 -R --inactive | grep httpd-clone
+  register: httpd_status
+  failed_when: '"no se encontró la orden" in httpd_status.stdout'
+
+- name: '[CONTROLLER][CHECK] Set Keystone Resource'
+  set_fact:
+    keystone_resource: 'keystone'
+  when: '"keystone-clone" in keystone_status.stdout'
+
+- name: '[CONTROLLER][CHECK] Set Keystone as HTTPD Resource'
+  set_fact:
+    keystone_resource: 'httpd'
+  when: '"httpd-clone" in httpd_status.stdout'
+#####
+
+- name: '[CONTROLLER][STOP HTTPD] Stop Keystone Resource'
+  command: "pcs resource disable {{ keystone_resource }}-clone"
+  run_once: yes
+
+
+- name: '[CONTROLLER][STOP GLANCE] Stop Glance Resource'
+  command: "pcs resource disable {{ item }}"
+  with_items:
+    - glance-api-clone
+    - glance-registry-clone
+  when:
+    - "'{{ ansible_fqdn | get_az_controller_master }}' == 'master'"
+
+- name: '[CONTROLLER][STOP CINDER] Stop All masters Cinder resources'
+  command: "pcs resource disable {{ item }}"
+  with_items:
+    - "cinder-backup-{{ region | upper }}-{{ az }}"
+    - "cinder-volume-{{ region | upper }}-{{ az }}"
+    - "cinder-scheduler-clone"
+  when:
+    - "'{{ ansible_fqdn | get_az_controller_master }}' == 'master'"
+
+- name: '[CONTROLLER][STOP CINDER] Stop AZ1 specific Cinder resource'
+  command: "pcs resource disable cinder-api-clone"
+  when:
+    - "'{{ ansible_fqdn | get_az_controller_master }}' == 'master'"
+    - "{{ az }} == 1"
+
+- name: '[CONTROLLER][STOP HEAT] Stop Heat Resource'
+  command: "pcs resource disable {{ item }}"
+  with_items:
+    - heat-engine-clone
+    - heat-api-cloudwatch-clone
+    - heat-api-cfn-clone
+    - heat-api-clone
+  when:
+    - "'{{ ansible_fqdn | get_az_controller_master }}' == 'master'"
+
+- name: '[CONTROLLER][STOP NEUTRON] Stop Neutron Resource'
+  command: "pcs resource disable {{ item }}"
+  with_items:
+    - neutron-server-clone
+  when:
+    - "'{{ ansible_fqdn | get_az_controller_master }}' == 'master'"
+
+- name: '[CONTROLLER][STOP CEILOMETER] Stop Ceilometer Resource'
+  command: "pcs resource disable {{ item }}"
+  with_items:
+    - ceilometer-notification-clone
+    - ceilometer-alarm-notifier-clone
+    - ceilometer-alarm-evaluator-clone
+    - ceilometer-delay-clone
+    - ceilometer-api-clone
+    - ceilometer-collector-clone
+    - ceilometer-central
+  when:
+    - "'{{ ansible_fqdn | get_az_controller_master }}' == 'master'"
+
+- name: '[CONTROLLER][STOP NOVA CONTROLLER] Stop Nova Resource'
+  command: "pcs resource disable {{ item }}"
+  with_items:
+    - nova-conductor-clone
+    - nova-scheduler-clone
+    - nova-api-clone
+    - nova-novncproxy-clone
+    - nova-consoleauth-clone
+  when:
+    - "'{{ ansible_fqdn | get_az_controller_master }}' == 'master'"
+
+- name: '[CONTROLLER][STOP NEUTRON] Stop memcached-clone Resource'
+  command: "pcs resource disable {{ item }}"
+  with_items:
+    - memcached-clone
+  when:
+    - "'{{ ansible_fqdn | get_az_controller_master }}' == 'master'"
+
+- name: '[CONTROLLER][STOP CLUSTER] Cluster Cleanup'
+  command: "pcs resource cleanup --all"
+  ignore_errors: yes
+  when:
+    - "'{{ ansible_fqdn | get_az_controller_master }}' == 'master'"
+
+- name: '[CONTROLLER][LAST] Check Clustered Processes'
+  shell: "pcs status | grep -A1 {{ item.p_name }}"
+  with_items:
+    - { p_name: 'memcached', status: 'Stopped' }
+    - { p_name: 'glance-registry', status: 'Stopped' }
+    - { p_name: 'glance-api', status: 'Stopped' }
+    - { p_name: 'cinder-api', status: 'Stopped' }
+    - { p_name: 'cinder-scheduler', status: 'Stopped' }
+    - { p_name: 'nova-consoleauth', status: 'Stopped' }
+    - { p_name: 'nova-novncproxy', status: 'Stopped' }
+    - { p_name: 'nova-api', status: 'Stopped' }
+    - { p_name: 'nova-scheduler', status: 'Stopped' }
+    - { p_name: 'nova-conductor', status: 'Stopped' }
+    - { p_name: 'ceilometer-collector', status: 'Stopped' }
+    - { p_name: 'ceilometer-api', status: 'Stopped' }
+    - { p_name: 'ceilometer-delay', status: 'Stopped' }
+    - { p_name: 'ceilometer-alarm-evaluator', status: 'Stopped' }
+    - { p_name: 'ceilometer-alarm-notifier', status: 'Stopped' }
+    - { p_name: 'ceilometer-notification', status: 'Stopped' }
+    - { p_name: 'heat-api', status: 'Stopped' }
+    - { p_name: 'heat-api-cfn', status: 'Stopped' }
+    - { p_name: 'heat-api-cloudwatch', status: 'Stopped' }
+    - { p_name: 'heat-engine', status: 'Stopped' }
+  register: all
+  until: '"{{ item.status }}" in all.stdout'
+  retries: 12
+  delay: 10
+  ignore_errors: true

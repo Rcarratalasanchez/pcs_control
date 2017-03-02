@@ -1,0 +1,14 @@
+---
+
+- name: '[NOVA COMPUTE] Start OSP Compute Services'
+  systemd: 
+    state: started
+    name: "{{ item }}"
+  with_items:
+    - openstack-nova-compute
+    - openstack-ceilometer-compute
+
+- name: '[NOVA COMPUTE] Start Nuage Compute Services'
+  shell: "/usr/share/openvswitch/scripts/nuage-metadata-agent.init start"
+
+

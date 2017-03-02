@@ -1,0 +1,16 @@
+---
+
+- name: '[NOVA COMPUTE] Stop OSP Compute Services'
+  systemd: 
+    state: stopped
+    name: "{{ item }}"
+  with_items:
+    - openstack-nova-compute
+    - openstack-ceilometer-compute
+
+- name: '[NOVA COMPUTE] Stop Nuage Compute Services'
+  shell: "/usr/share/openvswitch/scripts/nuage-metadata-agent.init stop"
+
+# Sometimes the metadata agent need a couple of seconds to be stopped correctly
+- name: 'Waiting services to stop'
+  pause: seconds=10

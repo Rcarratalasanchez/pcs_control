@@ -1,0 +1,45 @@
+---
+- set_fact:
+    az: "{{ ansible_fqdn | get_az_controller }}"
+
+## Stop Fencing
+- name: '[CINDER_CONTROLLER] Stop Fencing'
+  command: "pcs resource disable fence-{{ ansible_hostname }}-clu"
+
+- name: '[CINDER_CONTROLLER] Check Fencing'
+  shell: "crm_mon -1 -R --inactive | grep {{ item.p_name }}"
+  with_items:
+    - { p_name: "fence-{{ ansible_hostname }}-clu", status: 'Stopped' }
+  register: result
+  until: '"{{ item.status }}" in result.stdout'
+  retries: 12
+  delay: 10
+
+### Disable all resources
+#####
+
+- name: '[CINDER_CONTROLLER][STOP CINDER] Stop All masters Cinder resources'
+  command: "pcs resource disable {{ item }}"
+  with_items:
+    - "cinder-backup-{{ region | upper }}-{{ az }}"
+    - "cinder-volume-{{ region | upper }}-{{ az }}"
+    - "cinder-scheduler-clone"
+  when:
+    - "'{{ ansible_fqdn | get_az_controller_master }}' == 'master'"
+
+- name: '[CINDER_CONTROLLER][STOP CLUSTER] Cluster Cleanup'
+  command: "pcs resource cleanup --all"
+  ignore_errors: yes
+  when:
+    - "'{{ ansible_fqdn | get_az_controller_master }}' == 'master'"
+
+- name: '[CINDER_CONTROLLER][LAST] Check Non-Clustered Processes'
+  shell: "pcs status | grep -A1 {{ item.p_name }}"
+  with_items:
+    - { p_name: 'cinder-volume', status: 'Stopped' }
+    - { p_name: 'cinder-backup', status: 'Stopped' }
+    - { p_name: 'cinder-scheduler-clone', status: 'Stopped' }
+  register: no_clust
+  until: '"{{ item.status }}" in no_clust.stdout'
+  retries: 12
+  delay: 10

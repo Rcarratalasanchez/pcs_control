@@ -1,0 +1,55 @@
+---
+
+- set_fact:
+    az: "{{ ansible_fqdn | get_az_controller }}"
+
+# Start resources
+- name: '[HAPROXY][START LB HAPROXY] Start lb-haproxy-clone Resource'
+  command: "pcs resource enable {{ item }}"
+  with_items:
+    - lb-haproxy-clone
+  when:
+    - "'{{ ansible_fqdn | get_az_controller_master }}' == 'master'"
+
+# Cleanup resource 
+- name: '[HAPROXY][COUNTER] Cleanup Glance Resources'
+  command: "pcs resource cleanup {{ item }}"
+  with_items:
+    - lb-haproxy-clone
+  when:
+    - "'{{ ansible_fqdn | get_az_controller_master }}' == 'master'"
+
+# Check glance
+- name: '[CONTROLLER] Check Glance Clustered Processes'
+  shell: "crm_mon -1 -R | grep $(hostname -s) | grep {{ item.p_name }}"
+  with_items:
+    - { p_name: 'lb-haproxy', status: 'Started' }
+  register: lb_haproxy
+  until: '"{{ item.status }}" in lb_haproxy.stdout'
+  retries: 12
+  delay: 10
+  ignore_errors: true
+
+# Start fencing
+- name: '[HAPROXY] Start Fencing'
+  command: "pcs resource enable fence-{{ ansible_hostname }}-clu"
+
+- name: '[HAPROXY] Check Fencing'
+  shell: "crm_mon -1 -R | grep {{ item.p_name }}"
+  with_items:
+    - { p_name: "fence-{{ ansible_hostname }}-clu", status: 'Started' }
+  register: fence
+  until: '"{{ item.status }}" in fence.stdout'
+  retries: 12
+  delay: 10
+  ignore_errors: true
+
+- name: '[HAPROXY][COUNTER] Cleanup Fencing Resources'
+  command: "pcs resource cleanup {{ item.p_name }}"
+  with_items:
+    - { p_name: "fence-{{ ansible_hostname }}-clu", status: 'Started' }
+  when:
+    - fence | failed
+
+
+

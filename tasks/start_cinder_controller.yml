@@ -1,0 +1,90 @@
+---
+
+- name: 'Checkpoint after execute the no ssl'
+  pause: seconds=20
+
+- set_fact:
+    az: "{{ ansible_fqdn | get_az_controller }}"
+
+##### Detect if keystone are over httpd or keystone itself
+#####
+
+### Enable All Resources 
+
+- name: '[CONTROLLER][START CINDER] Start All masters Cinder resources'
+  command: "pcs resource enable {{ item }}"
+  with_items:
+    - "cinder-scheduler-clone"
+    - "cinder-backup-{{ region | upper }}-{{ az }}"
+    - "cinder-volume-{{ region | upper }}-{{ az }}"
+  when:
+    - "'{{ ansible_fqdn | get_az_controller_master }}' == 'master'"
+
+- name: 'Waiting for pcs...'
+  pause: seconds=10
+
+### Checks
+
+- name: '[CONTROLLER] Check Cinder Clustered Processes'
+  shell: "crm_mon -1 -R | grep $(hostname -s) | grep {{ item.p_name }}"
+  with_items:
+    - { p_name: 'openstack-cinder-scheduler', status: 'Started' }
+  register: cinder
+  until: '"{{ item.status }}" in cinder.stdout'
+  retries: 12
+  delay: 10
+  ignore_errors: true
+
+### Counters
+
+- name: '[CONTROLLER][COUNTER] Cleanup Cinder Resources'
+  command: "pcs resource cleanup {{ item }}"
+  with_items:
+    - "cinder-scheduler-clone"
+    - "cinder-backup-{{ region | upper }}-{{ az }}"
+    - "cinder-volume-{{ region | upper }}-{{ az }}"
+  when:
+    - "'{{ ansible_fqdn | get_az_controller_master }}' == 'master'"
+
+### Finishing
+- name: '[CONTROLLER] Start Fencing'
+  command: "pcs resource enable fence-{{ ansible_hostname }}-clu"
+
+- name: '[CONTROLLER] Check Fencing'
+  shell: "crm_mon -1 -R | grep {{ item.p_name }}"
+  with_items:
+    - { p_name: "fence-{{ ansible_hostname }}-clu", status: 'Started' }
+  register: fence
+  until: '"{{ item.status }}" in fence.stdout'
+  retries: 12
+  delay: 10
+  ignore_errors: true
+
+- name: '[CONTROLLER][COUNTER] Cleanup Fencing Resources'
+  command: "pcs resource cleanup {{ item.p_name }}"
+  with_items:
+    - { p_name: "fence-{{ ansible_hostname }}-clu", status: 'Started' }
+  when:
+    - fence | failed
+
+- name: '[CONTROLLER][LAST] Check Clustered Processes'
+  shell: "crm_mon -1 -R | grep $(hostname -s) | grep {{ item.p_name }}"
+  with_items:
+    - { p_name: 'openstack-cinder-scheduler', status: 'Started' }
+
+  register: all
+  until: '"{{ item.status }}" in all.stdout'
+  retries: 12
+  delay: 10
+  ignore_errors: true
+
+- name: '[CONTROLLER][LAST] Check Non-Clustered Processes'
+  shell: "crm_mon -1 -R | grep {{ item.p_name }}"
+  with_items:
+    - { p_name: 'cinder-volume', status: 'Started' }
+    - { p_name: 'cinder-backup', status: 'Started' }
+    - { p_name: "fence-{{ ansible_hostname }}-clu", status: 'Started' }
+  register: no_clust
+  until: '"{{ item.status }}" in no_clust.stdout'
+  retries: 12
+  delay: 10

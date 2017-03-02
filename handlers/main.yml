@@ -1,0 +1,81 @@
+---
+- name: wait for it
+  local_action: wait_for host={{ host }} port={{ port }} state={{ status }}
+  become: false
+
+- name: Reboot VM
+  shell: sleep 2 && reboot
+  async: 1
+  poll: 0
+  ignore_errors: true
+
+- name: Waiting for Server
+  wait_for:
+    host: "{{ ansible_ssh_host | default(inventory_hostname) }}"
+    port: "{{ ansible_ssh_port | default(22) }}"
+    search_regex: OpenSSH
+    delay: 30
+    timeout: 200
+  connection: local
+  become: false
+
+- name: Daemon Reload
+  command: systemctl daemon-reload
+
+- name: 'check heat-engine'
+  shell: "crm_mon -1 -R | grep $(hostname -s) | grep heat-engine"
+  register: result
+  until: '"Started" in result.stdout'
+  retries: 12
+  delay: 10
+
+- name: 'check ceilometer-central'
+  shell: "crm_mon -1 -R | grep ceilometer-central"
+  register: result
+  until: '"Started" in result.stdout'
+  retries: 12
+  delay: 15
+
+- name: 'check ceilometer-collector'
+  shell: "crm_mon -1 -R | grep $(hostname -s) | grep ceilometer-collector"
+  register: result
+  until: '"Started" in result.stdout'
+  retries: 12
+  delay: 15
+
+- name: 'check ceilometer-api'
+  shell: "crm_mon -1 -R | grep $(hostname -s) | grep ceilometer-api"
+  register: result
+  until: '"Started" in result.stdout'
+  retries: 12
+  delay: 15
+
+- name: 'check ceilometer-delay'
+  shell: "crm_mon -1 -R | grep $(hostname -s) | grep ceilometer-delay"
+  register: result
+  until: '"Started" in result.stdout'
+  retries: 12
+  delay: 15
+
+- name: 'check ceilometer-alarm-evaluator'
+  shell: "crm_mon -1 -R | grep $(hostname -s) | grep ceilometer-alarm-evaluator"
+  register: result
+  until: '"Started" in result.stdout'
+  retries: 12
+  delay: 15
+
+- name: 'check ceilometer-alarm-notifier'
+  shell: "crm_mon -1 -R | grep $(hostname -s) | grep ceilometer-alarm-notifier"
+  register: result
+  until: '"Started" in result.stdout'
+  retries: 12
+  delay: 15
+
+- name: 'Waiting Cluster'
+  pause: seconds=10
+
+- name: 'Pacemaker restart'
+  command: systemctl restart pcsd
+
+- name: 'Corosync restart'
+  command: systemctl restart corosync
